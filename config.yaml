@@ -1,0 +1,9 @@
+telegram:
+  bot_token: "8620675496:AAF91ajLAOK-0bY0tIwoXheBL9VJVeAe4Hw" # 메인 봇 토큰
+  user_id: "1668477288"     # 메시지를 받을 내 텔레그램 ID
+  api_id: "YOUR_API_ID_HERE"       # User-bot용 API ID
+  api_hash: "YOUR_API_HASH_HERE"   # User-bot용 API Hash
+
+keywords:
+  - "삼성전자"
+  - "애플"
