@@ -161,41 +161,41 @@ class KiwoomApiTask:
             d2_pymn_alow_amt = self._safe_cast(dep_data.get("d2_pymn_alow_amt"), int)
             lines.append(f"💰 *D+2 출금가능금액:* {d2_pymn_alow_amt:,}원\n")
 
-            # # --- 2. 총 잔고 요약 파싱 ---
-            # bal_summary = bal_data.get('output1', bal_data) if isinstance(bal_data, dict) else {}
-            # if isinstance(bal_summary, list) and len(bal_summary) > 0:
-            #     bal_summary = bal_summary[0]
+            # --- 2. 총 잔고 요약 파싱 ---
+            bal_summary = bal_data.get('output1', bal_data) if isinstance(bal_data, dict) else {}
+            if isinstance(bal_summary, list) and len(bal_summary) > 0:
+                bal_summary = bal_summary[0]
 
-            # total_buy = self._safe_cast(bal_summary.get("총매입금액", 0), int)
-            # total_eval = self._safe_cast(bal_summary.get("총평가금액", 0), int)
-            # total_profit = self._safe_cast(bal_summary.get("총평가손익금액", 0), int)
-            # total_yield = self._safe_cast(bal_summary.get("총수익률(%)", 0.0), float)
+            total_buy = self._safe_cast(bal_summary.get("총매입금액", 0), int)
+            total_eval = self._safe_cast(bal_summary.get("총평가금액", 0), int)
+            total_profit = self._safe_cast(bal_summary.get("총평가손익금액", 0), int)
+            total_yield = self._safe_cast(bal_summary.get("총수익률(%)", 0.0), float)
 
-            # lines.append("📋 *[계좌 요약]*")
-            # lines.append(f"• 총 매입금액: {total_buy:,}원")
-            # lines.append(f"• 총 평가금액: {total_eval:,}원")
+            lines.append("📋 *[계좌 요약]*")
+            lines.append(f"• 총 매입금액: {total_buy:,}원")
+            lines.append(f"• 총 평가금액: {total_eval:,}원")
             
-            # profit_icon = "🔴" if total_profit > 0 else "🔵" if total_profit < 0 else "⚫"
-            # lines.append(f"• 총 평가손익: {profit_icon} {total_profit:,}원 ({total_yield:+.2f}%)\n")
+            profit_icon = "🔴" if total_profit > 0 else "🔵" if total_profit < 0 else "⚫"
+            lines.append(f"• 총 평가손익: {profit_icon} {total_profit:,}원 ({total_yield:+.2f}%)\n")
 
-            # # --- 3. 개별 종목 상세 파싱 ---
-            # items = bal_data.get('output2', bal_data.get('items', [])) if isinstance(bal_data, dict) else []
-            # if isinstance(items, list) and items:
-            #     lines.append("📝 *[보유 종목 상세]*")
-            #     for idx, item in enumerate(items, 1):
-            #         if not isinstance(item, dict):
-            #             continue
-            #         name = item.get("종목명", "알수없음").strip()
-            #         qty = self._safe_cast(item.get("보유수량", 0), int)
-            #         profit = self._safe_cast(item.get("평가손익", 0), int)
-            #         rate = self._safe_cast(item.get("수익률(%)", 0.0), float)
+            # --- 3. 개별 종목 상세 파싱 ---
+            items = bal_data.get('output2', bal_data.get('items', [])) if isinstance(bal_data, dict) else []
+            if isinstance(items, list) and items:
+                lines.append("📝 *[보유 종목 상세]*")
+                for idx, item in enumerate(items, 1):
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("종목명", "알수없음").strip()
+                    qty = self._safe_cast(item.get("보유수량", 0), int)
+                    profit = self._safe_cast(item.get("평가손익", 0), int)
+                    rate = self._safe_cast(item.get("수익률(%)", 0.0), float)
                     
-            #         item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
-            #         lines.append(f"{idx}. {name}: {qty}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
-            # else:
-            #     lines.append("📝 보유 중인 종목이 없습니다.")
+                    item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
+                    lines.append(f"{idx}. {name}: {qty}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
+            else:
+                lines.append("📝 보유 중인 종목이 없습니다.")
 
-            # lines.append("\n" + "➖"*15 + "\n")
+            lines.append("\n" + "➖"*15 + "\n")
 
         return "\n".join(lines).strip()
 
