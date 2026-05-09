@@ -69,7 +69,7 @@ class KiwoomApiTask:
         except Exception as e:
             logger.error(f"[{self.name}] 계좌 {account} 토큰 발급 중 예외 발생: {e}")
 
-    async def fetch_api(self, endpoint, account, data=None):
+    async def fetch_api(self, endpoint, account, data=None, api_id=""):
         """키움 API 통신 공통 래퍼(Wrapper) 및 예외/Rate Limit 처리"""
         url = f"{self.base_url}{endpoint}"
         token = self.tokens.get(account)
@@ -79,11 +79,11 @@ class KiwoomApiTask:
             return None
             
         headers = {
-            'Content-Type': 'application/json;charset=UTF-8',
             'authorization': f'Bearer {token}',
-            'api-id': 'kt10000' # 명세에 따른 임시 TR 요청 ID 
+            'cont-yn': 'N',      # 연속조회 여부 (기본: N)
+            'next-key': '',      # 연속조회 키 (기본: 빈 문자열)
+            'api-id': api_id
         }
-        
         try:
             # 타임아웃 10초 설정 (장 점검 등 무응답 시 무한 대기 방지)
             timeout = aiohttp.ClientTimeout(total=10)
@@ -91,12 +91,13 @@ class KiwoomApiTask:
                 async with session.post(url, headers=headers, json=data or {}) as response:
                     if response.status == 200:
                         res_data = await response.json()
+                        print(res_data)
                         
                         # API 서버 오류코드(Rate Limit 등) 대응 - 가이드코드 1700 확인
                         if str(res_data.get('err_code', '')) == '1700' or str(res_data.get('return_code', '')) == '1700':
                             logger.warning(f"[{self.name}] API 호출 제한 도달 (Rate Limit 1700). 잠시 후 재시도합니다.")
                             await asyncio.sleep(1.5) # 백오프 대기
-                            return await self.fetch_api(endpoint, account, data)
+                            return await self.fetch_api(endpoint, account, data, api_id=api_id)
                             
                         return res_data
                     else:
@@ -110,16 +111,21 @@ class KiwoomApiTask:
             return None
 
     async def get_deposit_info(self, account):
-        """계좌별 예수금 상세 조회 (opw00001)"""
-        endpoint = "/api/dostk/opw00001"
-        data = {"계좌번호": account}
-        return await self.fetch_api(endpoint, account, data)
+        """계좌별 예수금 상세 조회 (kt00001)"""
+        endpoint = "/api/dostk/acnt"
+        data = {
+            "qry_tp": "3"
+        }
+        return await self.fetch_api(endpoint, account, data, api_id="kt00001")
 
     async def get_balance_info(self, account):
-        """계좌별 평가 잔고 내역 조회 (opw00018)"""
-        endpoint = "/api/dostk/opw00018"
-        data = {"계좌번호": account}
-        return await self.fetch_api(endpoint, account, data)
+        """계좌별 평가 잔고 내역 조회 (kt00018)"""
+        endpoint = "/api/dostk/acnt"
+        data = {
+            "qry_tp": "0",
+            "dmst_stex_tp": "KRX"
+        }
+        return await self.fetch_api(endpoint, account, data, api_id="kt00018")
 
     def _safe_cast(self, val, to_type, default=0):
         """문자열 내 콤마 제거나 빈 문자열 등을 안전하게 타입 변환하는 유틸리티 메서드"""
@@ -152,45 +158,44 @@ class KiwoomApiTask:
             lines.append(f"🏦 *계좌번호:* `{account}`")
 
             # --- 1. 예수금 파싱 (가이드 및 일반적 TR 응답 기준) ---
-            dep_output = dep_data.get('output', dep_data) if isinstance(dep_data, dict) else {}
-            deposit = self._safe_cast(dep_output.get("주문가능금액", dep_output.get("d+2추정예수금", 0)), int)
-            lines.append(f"💰 *주문가능(예수금):* {deposit:,}원\n")
+            d2_pymn_alow_amt = self._safe_cast(dep_data.get("d2_pymn_alow_amt"), int)
+            lines.append(f"💰 *D+2 출금가능금액:* {d2_pymn_alow_amt:,}원\n")
 
-            # --- 2. 총 잔고 요약 파싱 ---
-            bal_summary = bal_data.get('output1', bal_data) if isinstance(bal_data, dict) else {}
-            if isinstance(bal_summary, list) and len(bal_summary) > 0:
-                bal_summary = bal_summary[0]
+            # # --- 2. 총 잔고 요약 파싱 ---
+            # bal_summary = bal_data.get('output1', bal_data) if isinstance(bal_data, dict) else {}
+            # if isinstance(bal_summary, list) and len(bal_summary) > 0:
+            #     bal_summary = bal_summary[0]
 
-            total_buy = self._safe_cast(bal_summary.get("총매입금액", 0), int)
-            total_eval = self._safe_cast(bal_summary.get("총평가금액", 0), int)
-            total_profit = self._safe_cast(bal_summary.get("총평가손익금액", 0), int)
-            total_yield = self._safe_cast(bal_summary.get("총수익률(%)", 0.0), float)
+            # total_buy = self._safe_cast(bal_summary.get("총매입금액", 0), int)
+            # total_eval = self._safe_cast(bal_summary.get("총평가금액", 0), int)
+            # total_profit = self._safe_cast(bal_summary.get("총평가손익금액", 0), int)
+            # total_yield = self._safe_cast(bal_summary.get("총수익률(%)", 0.0), float)
 
-            lines.append("📋 *[계좌 요약]*")
-            lines.append(f"• 총 매입금액: {total_buy:,}원")
-            lines.append(f"• 총 평가금액: {total_eval:,}원")
+            # lines.append("📋 *[계좌 요약]*")
+            # lines.append(f"• 총 매입금액: {total_buy:,}원")
+            # lines.append(f"• 총 평가금액: {total_eval:,}원")
             
-            profit_icon = "🔴" if total_profit > 0 else "🔵" if total_profit < 0 else "⚫"
-            lines.append(f"• 총 평가손익: {profit_icon} {total_profit:,}원 ({total_yield:+.2f}%)\n")
+            # profit_icon = "🔴" if total_profit > 0 else "🔵" if total_profit < 0 else "⚫"
+            # lines.append(f"• 총 평가손익: {profit_icon} {total_profit:,}원 ({total_yield:+.2f}%)\n")
 
-            # --- 3. 개별 종목 상세 파싱 ---
-            items = bal_data.get('output2', bal_data.get('items', [])) if isinstance(bal_data, dict) else []
-            if isinstance(items, list) and items:
-                lines.append("📝 *[보유 종목 상세]*")
-                for idx, item in enumerate(items, 1):
-                    if not isinstance(item, dict):
-                        continue
-                    name = item.get("종목명", "알수없음").strip()
-                    qty = self._safe_cast(item.get("보유수량", 0), int)
-                    profit = self._safe_cast(item.get("평가손익", 0), int)
-                    rate = self._safe_cast(item.get("수익률(%)", 0.0), float)
+            # # --- 3. 개별 종목 상세 파싱 ---
+            # items = bal_data.get('output2', bal_data.get('items', [])) if isinstance(bal_data, dict) else []
+            # if isinstance(items, list) and items:
+            #     lines.append("📝 *[보유 종목 상세]*")
+            #     for idx, item in enumerate(items, 1):
+            #         if not isinstance(item, dict):
+            #             continue
+            #         name = item.get("종목명", "알수없음").strip()
+            #         qty = self._safe_cast(item.get("보유수량", 0), int)
+            #         profit = self._safe_cast(item.get("평가손익", 0), int)
+            #         rate = self._safe_cast(item.get("수익률(%)", 0.0), float)
                     
-                    item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
-                    lines.append(f"{idx}. {name}: {qty}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
-            else:
-                lines.append("📝 보유 중인 종목이 없습니다.")
+            #         item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
+            #         lines.append(f"{idx}. {name}: {qty}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
+            # else:
+            #     lines.append("📝 보유 중인 종목이 없습니다.")
 
-            lines.append("\n" + "➖"*15 + "\n")
+            # lines.append("\n" + "➖"*15 + "\n")
 
         return "\n".join(lines).strip()
 
