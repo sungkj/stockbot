@@ -1,8 +1,10 @@
 import yaml
+import datetime
 from telegram.ext import Application
 from utils.logger import setup_logger
 from tasks.news_monitor import NewsMonitor
 from tasks.google_trends import GoogleTrendsTask
+from tasks.kiwoom_api import KiwoomApiTask
 
 logger = setup_logger(__name__)
 
@@ -30,6 +32,32 @@ class TaskManager:
             self._wrap_task(news_task.run),
             interval=60, # 60초 간격
             first=5
+        )
+        
+        # 3. 키움증권 데이터 및 스케줄러 설정
+        kiwoom_task = KiwoomApiTask()
+        kst = datetime.timezone(datetime.timedelta(hours=9)) # KST (UTC+9)
+        
+        # 3-1. 평일(월~금) 15시 40분마다 계좌 요약 자동 발송
+        self.job_queue.run_daily(
+            self._wrap_task(kiwoom_task.run),
+            time=datetime.time(hour=15, minute=40, tzinfo=kst),
+            days=(0, 1, 2, 3, 4) # 0:월요일 ~ 4:금요일
+        )
+
+        # 3-2. 매일 새벽 3시에 전체 계좌 토큰 자동 재발급
+        async def reissue_token_wrapper(context):
+            logger.info("새벽 3시: 키움증권 토큰 재발급 시작")
+            try:
+                await kiwoom_task.initialize()
+                user_id = self.config["telegram"]["user_id"]
+                await context.bot.send_message(chat_id=user_id, text="🔄 [시스템] 키움증권 API 접속 토큰이 갱신되었습니다.")
+            except Exception as e:
+                logger.error(f"키움증권 토큰 재발급 실패: {e}")
+
+        self.job_queue.run_daily(
+            reissue_token_wrapper,
+            time=datetime.time(hour=3, minute=0, tzinfo=kst)
         )
 
     def _wrap_task(self, task_func):
