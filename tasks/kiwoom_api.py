@@ -135,7 +135,7 @@ class KiwoomApiTask:
         """계좌별 평가 잔고 내역 조회 (kt00018)"""
         endpoint = "/api/dostk/acnt"
         data = {
-            "qry_tp": "0",
+            "qry_tp": "1",
             "dmst_stex_tp": "KRX"
         }
         return await self.fetch_api(endpoint, account, data, api_id="kt00018")
@@ -190,19 +190,14 @@ class KiwoomApiTask:
                     raise ValueError("잔고 요약 리스트가 비어 있습니다.")
                 bal_summary = bal_summary[0]
 
-            if "tot_buy_amt" in bal_summary:
-                raw_buy = bal_summary["tot_buy_amt"]
-            elif "tot_pur_amt" in bal_summary:
-                raw_buy = bal_summary["tot_pur_amt"]
-            else:
-                raise KeyError("잔고 데이터에서 총매입금액 키를 찾을 수 없습니다.")
-                
+            raw_buy = bal_summary.get("tot_pur_amt") or bal_summary.get("tot_buy_amt")
             raw_eval = bal_summary.get("tot_evlt_amt") or bal_summary.get("tot_eval_amt")
-            raw_profit = bal_summary.get("tot_evltv_prft") or bal_summary.get("tot_eval_pl_amt")
+            raw_profit = bal_summary.get("tot_evlt_pl") or bal_summary.get("tot_evltv_prft") or bal_summary.get("tot_eval_pl_amt")
             raw_yield = bal_summary.get("tot_prft_rt") or bal_summary.get("tot_rtn_rt")
             
-            if raw_eval is None or raw_profit is None or raw_yield is None:
-                raise KeyError("잔고 요약 데이터 중 일부 필수 키가 누락되었습니다.")
+            if raw_buy is None or raw_eval is None or raw_profit is None or raw_yield is None:
+                # 데이터가 없는 경우 0으로 처리
+                raw_buy, raw_eval, raw_profit, raw_yield = raw_buy or "0", raw_eval or "0", raw_profit or "0", raw_yield or "0.0"
 
             total_buy = self._safe_cast(raw_buy, int)
             total_eval = self._safe_cast(raw_eval, int)
@@ -217,8 +212,8 @@ class KiwoomApiTask:
             lines.append(f"• 총 평가손익: {profit_icon} {total_profit:,}원 ({total_yield:+.2f}%)\n")
 
             # --- 3. 개별 종목 상세 파싱 (REST API 키 반영) ---
-            items: list[dict[str, Any]] = []
-            if isinstance(bal_data, dict):
+            items: list[dict[str, Any]] = bal_data.get("acnt_evlt_remn_indv_tot", [])
+            if not items and isinstance(bal_data, dict):
                 for key, val in bal_data.items():
                     if isinstance(val, list):
                         items = val
@@ -230,23 +225,18 @@ class KiwoomApiTask:
                     if not isinstance(item, dict):
                         continue
                         
-                    name = item.get("stk_nm") or item.get("prdt_name")
-                    if not name:
-                        raise KeyError("종목 상세 데이터에서 종목명 키를 찾을 수 없습니다.")
+                    name = item.get("stk_nm") or item.get("prdt_name") or "알수없음"
                     
-                    raw_qty = item.get("rmnd_qty") or item.get("hldg_qty")
-                    raw_item_profit = item.get("evltv_prft") or item.get("eval_pl_amt")
-                    raw_item_rate = item.get("prft_rt") or item.get("rtn_rt")
-                    
-                    if raw_qty is None or raw_item_profit is None or raw_item_rate is None:
-                        raise KeyError("종목 상세 데이터에서 필수 숫자 정보 키가 누락되었습니다.")
+                    raw_qty = item.get("rmnd_qty") or item.get("hldg_qty") or "0"
+                    raw_item_profit = item.get("evltv_prft") or item.get("eval_pl_amt") or "0"
+                    raw_item_rate = item.get("prft_rt") or item.get("rtn_rt") or "0.0"
 
                     qty = self._safe_cast(raw_qty, int)
                     profit = self._safe_cast(raw_item_profit, int)
                     rate = self._safe_cast(raw_item_rate, float)
                     
                     item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
-                    lines.append(f"{idx}. {name.strip()}: {qty}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
+                    lines.append(f"{idx}. {name.strip()}: {qty:,}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
             else:
                 lines.append("📝 보유 중인 종목이 없습니다.")
 
