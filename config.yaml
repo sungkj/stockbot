@@ -1,9 +1,15 @@
 telegram:
-  bot_token: "8620675496:AAF91ajLAOK-0bY0tIwoXheBL9VJVeAe4Hw" # 메인 봇 토큰
-  user_id: "1668477288"     # 메시지를 받을 내 텔레그램 ID
-  api_id: "YOUR_API_ID_HERE"       # User-bot용 API ID
-  api_hash: "YOUR_API_HASH_HERE"   # User-bot용 API Hash
-
-keywords:
-  - "삼성전자"
-  - "애플"
+  bot_token: 8620675496:AAF91ajLAOK-0bY0tIwoXheBL9VJVeAe4Hw
+  user_id: '1668477288'
+  api_id: YOUR_API_ID_HERE
+  api_hash: YOUR_API_HASH_HERE
+stocks:
+  삼성전자:
+  - DRAM 가격
+  - HBM
+  애플:
+  - 아이폰
+  - 비전프로
+  그래피:
+  - SMA
+  - 그래피 안녕 ㅎㅎ
