@@ -1,6 +1,9 @@
 import os
 import asyncio
 import aiohttp
+import ssl
+import certifi
+import re
 from typing import Any
 from utils.logger import setup_logger
 
@@ -14,6 +17,24 @@ class KiwoomApiTask:
         self.credentials: dict[str, dict[str, str]] = {}  # {account: {'appkey': '', 'secretkey': ''}}
         self.tokens: dict[str, str] = {}                  # {account: 'access_token'}
         
+        # certifi를 사용하는 SSL Context 생성
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self._connector = aiohttp.TCPConnector(ssl=ssl_context)
+        self._session: aiohttp.ClientSession | None = None
+        
+    def _get_session(self) -> aiohttp.ClientSession:
+        """클래스 내에서 공유되는 단일 ClientSession을 가져오거나 생성합니다."""
+        if self._session is None or self._session.closed:
+            # 타임아웃 10초 설정 (장 점검 등 무응답 시 무한 대기 방지)
+            timeout = aiohttp.ClientTimeout(total=10)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=self._connector)
+        return self._session
+    
+    async def close(self) -> None:
+        """공유된 ClientSession을 안전하게 닫습니다."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+
     async def initialize(self) -> None:
         """초기화: 키 파일 로드 및 전체 계좌 토큰 발급 (plan.md 1, 2단계)"""
         self._load_keys()
@@ -46,12 +67,11 @@ class KiwoomApiTask:
 
     async def _issue_all_tokens(self) -> None:
         """모든 계좌에 대해 비동기적으로 접근 토큰(Access Token)을 발급받습니다."""
-        async with aiohttp.ClientSession() as session:
-            tasks = [self.issue_token(session, account) for account in self.credentials]
-            if tasks:
-                await asyncio.gather(*tasks)
+        tasks = [self.issue_token(account) for account in self.credentials]
+        if tasks:
+            await asyncio.gather(*tasks)
 
-    async def issue_token(self, session: aiohttp.ClientSession, account: str) -> None:
+    async def issue_token(self, account: str) -> None:
         """특정 계좌의 접근 토큰을 발급받아 딕셔너리에 관리합니다."""
         url = f"{self.base_url}/oauth2/token"  # 토큰 발급 엔드포인트
         
@@ -59,6 +79,7 @@ class KiwoomApiTask:
             raise KeyError(f"[{self.name}] {account} 계좌의 인증 정보가 존재하지 않습니다.")
             
         creds = self.credentials[account]
+        session = self._get_session()
         
         data = {
             "grant_type": "client_credentials",
@@ -89,6 +110,7 @@ class KiwoomApiTask:
             raise KeyError(f"[{self.name}] 계좌 {account}의 유효한 토큰이 없습니다.")
             
         token = self.tokens[account]
+        session = self._get_session()
             
         headers = {
             'authorization': f'Bearer {token}',
@@ -97,25 +119,22 @@ class KiwoomApiTask:
             'api-id': api_id
         }
         try:
-            # 타임아웃 10초 설정 (장 점검 등 무응답 시 무한 대기 방지)
-            timeout = aiohttp.ClientTimeout(total=10)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, headers=headers, json=data or {}) as response:
-                    if response.status == 200:
-                        res_data = await response.json()
+            async with session.post(url, headers=headers, json=data or {}) as response:
+                if response.status == 200:
+                    res_data = await response.json()
+                    
+                    # API 서버 오류코드(Rate Limit 등) 대응 - 가이드코드 1700 확인
+                    err_code = str(res_data.get('err_code', ''))
+                    ret_code = str(res_data.get('return_code', ''))
+                    if err_code == '1700' or ret_code == '1700':
+                        logger.warning(f"[{self.name}] API 호출 제한 도달 (Rate Limit 1700). 잠시 후 재시도합니다.")
+                        await asyncio.sleep(1.5) # 백오프 대기
+                        return await self.fetch_api(endpoint, account, data, api_id=api_id)
                         
-                        # API 서버 오류코드(Rate Limit 등) 대응 - 가이드코드 1700 확인
-                        err_code = str(res_data.get('err_code', ''))
-                        ret_code = str(res_data.get('return_code', ''))
-                        if err_code == '1700' or ret_code == '1700':
-                            logger.warning(f"[{self.name}] API 호출 제한 도달 (Rate Limit 1700). 잠시 후 재시도합니다.")
-                            await asyncio.sleep(1.5) # 백오프 대기
-                            return await self.fetch_api(endpoint, account, data, api_id=api_id)
-                            
-                        return res_data
-                    else:
-                        logger.error(f"[{self.name}] API 통신 오류 (Status: {response.status})")
-                        raise ValueError(f"API 통신 오류: HTTP {response.status}")
+                    return res_data
+                else:
+                    logger.error(f"[{self.name}] API 통신 오류 (Status: {response.status})")
+                    raise ValueError(f"API 통신 오류: HTTP {response.status}")
         except asyncio.TimeoutError:
             logger.error(f"[{self.name}] API 호출 시간 초과 (장 점검 시간 의심)")
             return None
@@ -149,6 +168,12 @@ class KiwoomApiTask:
             if not val:
                 raise ValueError("변환할 문자열이 비어있습니다.")
         return to_type(val)
+
+    def _escape_markdown(self, text: str) -> str:
+        """Telegram MarkdownV2 포맷의 특수문자를 이스케이프 처리합니다."""
+        # 참고: https://core.telegram.org/bots/api#markdownv2-style
+        escape_chars = r'([_*\[\]()~`>#+\-=|{}.!])'
+        return re.sub(escape_chars, r'\\\1', text)
 
     def _parse_and_format(self, results: dict[str, Any]) -> str:
         """API 원본 응답 데이터를 텔레그램 메시지 포맷으로 가공합니다."""
@@ -226,6 +251,7 @@ class KiwoomApiTask:
                         continue
                         
                     name = item.get("stk_nm") or item.get("prdt_name") or "알수없음"
+                    name = self._escape_markdown(name.strip())
                     
                     raw_qty = item.get("rmnd_qty") or item.get("hldg_qty") or "0"
                     raw_item_profit = item.get("evltv_prft") or item.get("eval_pl_amt") or "0"
@@ -236,7 +262,7 @@ class KiwoomApiTask:
                     rate = self._safe_cast(raw_item_rate, float)
                     
                     item_icon = "🔺" if profit > 0 else "🔻" if profit < 0 else "➖"
-                    lines.append(f"{idx}. {name.strip()}: {qty:,}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
+                    lines.append(f"{idx}. {name}: {qty:,}주 | {item_icon} {profit:,}원 ({rate:+.2f}%)")
             else:
                 lines.append("📝 보유 중인 종목이 없습니다.")
 

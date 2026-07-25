@@ -7,4 +7,5 @@ pytrends==4.9.2
 matplotlib==3.8.4
 requests==2.31.0
 beautifulsoup4==4.12.3
-aiohttp
+aiohttp==3.9.5
+certifi==2024.7.4
